@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.loyalty.finance</groupId>
+    <artifactId>fin-issuance-processor</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>fin-issuance-processor</name>
+    <description>Spring Boot and batch integrated project for fin-issuance-processor</description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <java.version>1.8</java.version>
+        <!--		<newrelic.version>4.1.0</newrelic.version>-->
+        <!--<maven.test.skip>true</maven.test.skip>-->
+    </properties>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.0.2.RELEASE</version>
+        <relativePath/>
+    </parent>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-batch</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.2.2</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.batch</groupId>
+            <artifactId>spring-batch-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk</artifactId>
+            <version>1.11.290</version>
+        </dependency>
+        <!--New Relic-->
+        <!--		<dependency>-->
+        <!--			<groupId>com.newrelic.agent.java</groupId>-->
+        <!--			<artifactId>newrelic-agent</artifactId>-->
+        <!--			<version>${newrelic.version}</version>-->
+        <!--			<scope>provided</scope>-->
+        <!--		</dependency>-->
+        <!--New Relic-->
+        <dependency>
+            <groupId>org.spockframework</groupId>
+            <artifactId>spock-core</artifactId>
+            <version>1.0-groovy-2.4</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.codehaus.groovy</groupId>
+            <artifactId>groovy-all</artifactId>
+            <version>2.4.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.github.ulisesbocchio</groupId>
+            <artifactId>jasypt-spring-boot-starter</artifactId>
+            <version>1.15</version>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.gmavenplus</groupId>
+                <artifactId>gmavenplus-plugin</artifactId>
+                <version>1.5</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>addTestSources</goal>
+                            <goal>testCompile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>2.18.1</version>
+                <!--<configuration> <excludedGroups>com.loyalty.finance.kinesis.client.junit.UnitTest</excludedGroups>
+                    </configuration> -->
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>2.18.1</version>
+                <configuration>
+                    <!-- ToDO exclude junit test when we are running integration test -->
+                    <includes>
+                        <include>**/*.java</include>
+                    </includes>
+                    <!--<groups>com.loyalty.finance.kinesis.client.junit.UnitTest</groups> -->
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <!--Plugins for docker build-->
+            <plugin>
+                <groupId>com.spotify</groupId>
+                <artifactId>docker-maven-plugin</artifactId>
+                <version>1.0.0</version>
+                <configuration>
+                    <useConfigFile>true</useConfigFile>
+                    <registryUrl>https://277983268692.dkr.ecr.us-east-1.amazonaws.com</registryUrl>
+                    <imageName>277983268692.dkr.ecr.us-east-1.amazonaws.com/${project.name}</imageName>
+                    <baseImage>277983268692.dkr.ecr.us-east-1.amazonaws.com/docker-slim-java</baseImage>
+                    <workdir>/opt/app</workdir>
+                    <entryPoint>["/usr/local/bin/get-rds-certs", "/usr/local/bin/kms-env-java", "/startApp.sh"]</entryPoint>
+                    <imageTags>
+                        <imageTag>${build.number}</imageTag>
+                    </imageTags>
+                    <resources>
+                        <!--						<resource>-->
+                        <!--							<targetPath>/</targetPath>-->
+                        <!--							<directory>${project.build.directory}/lib</directory>-->
+                        <!--							<include>signalfx-tracing.jar</include>-->
+                        <!--						</resource>-->
+                        <resource>
+                            <targetPath>/</targetPath>
+                            <directory>${project.build.directory}</directory>
+                            <include>${project.build.finalName}.jar</include>
+                        </resource>
+                        <!--						<resource>-->
+                        <!--							<targetPath>/</targetPath>-->
+                        <!--							<directory>${basedir}/src/main/resources</directory>-->
+                        <!--							<include>agent.yml</include>-->
+                        <!--						</resource>-->
+                        <resource>
+                            <targetPath>/</targetPath>
+                            <directory>${basedir}/src/main/resources/scripts</directory>
+                            <include>startApp.sh</include>
+                        </resource>
+                    </resources>
+                </configuration>
+            </plugin>
+            <!--end of Plugins for docker build-->
+            <plugin>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-dependencies</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+        </plugins>
+
+    </build>
+
+
+</project>

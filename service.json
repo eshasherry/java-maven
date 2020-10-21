@@ -1,0 +1,749 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Creates fin-issuance-processor",
+  "Parameters": {
+    "ClusterStackName": {
+      "Description": "Name of an active CloudFormation stack that contains an ECS cluster",
+      "Type": "String",
+      "MinLength": 1,
+      "MaxLength": 255,
+      "AllowedPattern": "^[a-zA-Z][-a-zA-Z0-9]*$"
+    },
+    "Environment" : {
+      "Description": "Type of environment",
+      "Type": "String",
+      "AllowedValues" : ["dev","int","load","uat","sandbox","pre-prod","prod"]
+    },
+    "Path": {
+      "Type": "String",
+      "Description": "The path to register the application under the load balancer. Only include path name starting with a /"
+    },
+    "AppName": {
+      "Type": "String",
+      "Description": "Name of app. Should be the same as docker repository name.",
+      "Default": "fin-issuance-processor"
+    },
+    "AppVersion": {
+      "Type": "String",
+      "Description": "Version label of app"
+    },
+    "AppContainerPort": {
+      "Type": "Number",
+      "Description": "Port the app runs on in the image",
+      "Default": "8080"
+    },
+    "ImageRepository": {
+      "Type": "String",
+      "Description": "The URI of the image repository where the app is published. Do not include app name in URI.",
+      "Default": "277983268692.dkr.ecr.us-east-1.amazonaws.com"
+    },
+    "KinesisStackName": {
+      "Type": "String",
+      "Description": "The name of Kinesis which is unique for each environment, used for logging to splunk"
+    },
+    "Memory": {
+      "Type": "Number",
+      "Description": "Soft memory on container",
+      "Default": "1024"
+    },
+    "Cpu": {
+      "Type": "Number",
+      "Description": "cpu unites on container",
+      "Default": "100"
+    },
+    "AppDesiredCount": {
+      "Type": "Number",
+      "Description": "Number of instances of the service to run",
+      "Default": "1"
+    },
+    "AppMaxCount": {
+      "Type": "Number",
+      "Description": "Max number of instances of the service to scale out to",
+      "Default": "1"
+    },
+    "AppMinCount": {
+      "Type": "Number",
+      "Description": "Min number of instances of the service to scale in to",
+      "Default": "1"
+    },
+    "CPUHighThreshold": {
+      "Type": "Number",
+      "Description": "Percentage of service cpu utilization that is considered high",
+      "Default": "60"
+    },
+    "JvmXmsMemory": {
+      "Type": "Number",
+      "Description": "Jvm Xms Memory",
+      "Default": "1024"
+    },
+    "JvmXmxMemory": {
+      "Type": "Number",
+      "Description": "Jvm Xmx Memory",
+      "Default": "1024"
+    },
+    "LogRetention": {
+      "Type": "Number",
+      "Description": "Number of days to retain logs in CWL",
+      "Default": "14"
+    },
+    "KmsKey": {
+      "Type": "String",
+      "Description": "The ARN of a KMS CMK to use to decrypt secure environment variables"
+    },
+    "PagerDutyEndpoint": {
+      "Type": "String",
+      "Description": "Pager Duty Endpoint for LoyaltyOne CloudWatch",
+      "Default" : "https://events.pagerduty.com/integration/d257a89ff3584a29ab752c555ef0d4c8/enqueue"
+    },
+    "SubscribeToPagerDutyEndpoint": {
+      "Type": "String",
+      "Description": "User PagerDuty Endpoint for Subscribing",
+      "AllowedValues": [ "true", "false" ],
+      "Default": "false"
+    },
+    "EvaluationPeriods": {
+      "Type": "Number",
+      "Description": "Evaluation Period Datapoints for CloudWatch",
+      "Default": "3"
+    },
+    "Period": {
+      "Type": "Number",
+      "Description": "Evaluation Time Period for CloudWatch",
+      "Default": "60"
+    },
+    "MinimumHealthyHostEvaluationPeriods": {
+      "Type": "Number",
+      "Description": "Evaluation Period Datapoints for CloudWatch for MinimumHealthyHost",
+      "Default": "1"
+    },
+    "MinimumHealthyHostPeriod": {
+      "Type": "Number",
+      "Description": "Evaluation Time Period for CloudWatch for MinimumHealthyHost",
+      "Default": "60"
+    },
+    "MaximumHealthyHostEvaluationPeriods": {
+      "Type": "Number",
+      "Description": "Evaluation Period Datapoints for CloudWatch for MinimumHealthyHost",
+      "Default": "1"
+    },
+    "MaximumHealthyHostPeriod": {
+      "Type": "Number",
+      "Description": "Evaluation Time Period for CloudWatch for MinimumHealthyHost",
+      "Default": "60"
+    },
+    "MinimumHealthyPercent": {
+      "Type": "Number",
+      "Description": "Minimum percent of health",
+      "Default": "0"
+    },
+    "MaximumPercent": {
+      "Type": "Number",
+      "Description": "Maximum percent of health",
+      "Default": "100"
+    },
+    "ListenerPort": {
+      "Type": "Number",
+      "Description": "The port to register with the Load Balancer"
+    }
+  },
+  "Conditions" : {
+    "SubscribeToPagerDutyEndpointCondition" : {"Fn::Equals" : [{"Ref" : "SubscribeToPagerDutyEndpoint"}, "true"]}
+  },
+  "Resources": {
+    "TargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${Environment}-${AppName}-TG"
+        },
+        "HealthCheckProtocol": "HTTPS",
+        "HealthCheckPath": {
+          "Fn::Sub": "${Path}/health"
+        },
+        "Port":{
+          "Ref": "ListenerPort"
+        },
+        "Protocol": "TCP",
+        "TargetGroupAttributes": [{
+          "Key": "deregistration_delay.timeout_seconds",
+          "Value": "20"
+        }],
+        "VpcId": {
+          "Fn::ImportValue": {
+            "Fn::Sub": "${ClusterStackName}-VpcId"
+          }
+        },
+        "Tags": [{
+          "Key": "Name",
+          "Value": {
+            "Fn::Sub": "ECS Target Group - ${AWS::StackName}"
+          }
+        }]
+      }
+    },
+    "Listener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "Port":{
+          "Ref": "ListenerPort"
+        },
+        "Protocol": "TCP",
+        "LoadBalancerArn":{
+          "Fn::ImportValue": {
+            "Fn::Sub": "${ClusterStackName}-NetworkLoadBalancerARN"
+          }
+        },
+        "DefaultActions": [{
+          "TargetGroupArn":{
+            "Ref": "TargetGroup"
+          },
+          "Type": "forward"
+        }]
+      }
+    },
+    "EcsTaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Sid": "",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "ecs-tasks.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
+          }]
+        },
+
+        "Path": "/",
+        "Policies": [{
+          "PolicyName": "ECS-CMK-Decrypt-Access",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": ["kms:Decrypt"],
+              "Resource": [{
+                "Ref": "KmsKey"
+              }]
+            }]
+          }
+        },
+          {
+            "PolicyName": "AmazonSESFullAccess",
+            "PolicyDocument":{
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ses:*"
+                  ],
+                  "Resource": "*"
+                }
+              ]}
+          }]
+      }
+    },
+    "TaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "ContainerDefinitions": [{
+          "Name": {
+            "Ref": "AppName"
+          },
+          "Image": {
+            "Fn::Sub": "${ImageRepository}/${AppName}:${AppVersion}"
+          },
+          "DockerLabels": {
+            "agent.signalfx.com.port.8080": "true",
+            "agent.signalfx.com.config.8080.intervalSeconds": "1"
+
+          },
+          "Cpu": {
+            "Ref": "Cpu"
+          },
+          "PortMappings": [{
+            "ContainerPort": {
+              "Ref": "AppContainerPort"
+            },
+            "HostPort": 0
+          }],
+          "Environment" : [{
+            "Name" : "FIN_JAVA_OPTS",
+            "Value" : { "Fn::Sub" : " -Xms${JvmXmsMemory}m  -Xmx${JvmXmxMemory}m -XX:+HeapDumpOnOutOfMemoryError " }
+          }],
+          "Command": [
+            {
+              "Fn::Sub": "-J-Xms${JvmXmsMemory}m"
+            },
+            {
+              "Fn::Sub": "-J-Xmx${JvmXmxMemory}m"
+            },
+            "-J-XX:+HeapDumpOnOutOfMemoryError"
+          ,
+            {
+              "Fn::Sub": "--server.servlet.context-path=${Path}"
+            }
+          ],
+          "MemoryReservation": {
+            "Ref": "Memory"
+          },
+          "Essential": "true",
+          "LogConfiguration": {
+            "LogDriver": "awslogs",
+            "Options": {
+              "awslogs-group": {
+                "Ref": "LogGroup"
+              },
+              "awslogs-region": {
+                "Ref": "AWS::Region"
+              },
+              "awslogs-stream-prefix": "ecs"
+            }
+          }
+        },{
+          "Name": "secure-proxy",
+          "Image": {
+            "Fn::Sub": "277983268692.dkr.ecr.us-east-1.amazonaws.com/secure-proxy:${Environment}"
+          },
+          "Cpu": "256",
+          "MemoryReservation": "512",
+          "PortMappings": [
+            {
+              "ContainerPort": 443,
+              "HostPort": 0
+            }
+          ],
+          "Links": [
+            {
+              "Fn::Sub": "${AppName}"
+            }
+          ],
+          "Environment": [
+            {
+              "Name" : "BACKEND_TARGET",
+              "Value" : {
+                "Fn::Sub": "http://${AppName}:${AppContainerPort}"
+              }
+            }
+          ],
+          "Ulimits": [
+            {
+              "Name": "nofile",
+              "SoftLimit": 32768,
+              "HardLimit": 32768
+            }
+          ],
+          "Essential": "true",
+          "LogConfiguration": {
+            "LogDriver": "awslogs",
+            "Options": {
+              "awslogs-group": {
+                "Ref": "LogGroup"
+              },
+              "awslogs-region": {
+                "Ref": "AWS::Region"
+              },
+              "awslogs-stream-prefix": "ecs"
+            }
+          }
+        },
+          {
+            "EntryPoint": [
+              "bash",
+              "-c"
+            ],
+            "PortMappings": [],
+            "Command": [
+              "curl --fail $CONFIG_URL > /etc/signalfx/agent.yaml && exec /bin/signalfx-agent"
+            ],
+            "Environment": [
+              {
+                "Name": "ACCESS_TOKEN",
+                "Value": {
+                  "Fn::Sub": [
+                    "{{resolve:secretsmanager:arn:aws:secretsmanager:${AWS_Region}:${AWS_AccountId}:secret:l1-signalfx-accesstoken-nonprod}}",
+                    {
+                      "AWS_Region": {
+                        "Ref": "AWS::Region"
+                      },
+                      "AWS_AccountId": {
+                        "Ref": "AWS::AccountId"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "Name": "CONFIG_URL",
+                "Value": "https://raw.githubusercontent.com/signalfx/signalfx-agent/master/deployments/ecs/agent.yaml"
+              },
+              {
+                "Name": "INGEST_URL",
+                "Value": "https://ingest.us1.signalfx.com"
+              },
+              {
+                "Name": "API_URL",
+                "Value": "https://api.us1.signalfx.com"
+              },
+              {
+                "Name": "SIGNALFX_ENDPOINT_URL",
+                "Value": "https://ingest.us1.signalfx.com/v2/trace"
+
+              },
+              {
+                "Name": "SIGNALFX_SERVICE_NAME",
+                "Value": {
+                  "Fn::Sub": "${Environment}-${AppName}"
+                }
+
+              },
+              {
+                "Name": "SIGNALFX_AGENT_HOST",
+                "Value": "localhost"
+              }
+            ],
+            "DockerLabels": {
+              "app": "signalfx-agent"
+            },
+            "Name": "signalfx-agent",
+            "Image": "quay.io/signalfx/signalfx-agent:5.3.2",
+            "MemoryReservation": "200",
+            "Essential": "false",
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "ecs"
+              }
+            }
+          }],
+        "Volumes": [],
+        "Family": {
+          "Ref": "AWS::StackName"
+        },
+        "TaskRoleArn": {
+          "Ref": "EcsTaskRole"
+        }
+      }
+    },
+    "Service": {
+      "Type": "AWS::ECS::Service",
+      "DependsOn": ["Listener", "LogGroup"],
+      "Properties": {
+        "ServiceName": {
+          "Ref": "AWS::StackName"
+        },
+        "Role": {
+          "Fn::ImportValue": {
+            "Fn::Sub": "${ClusterStackName}-EcsServiceRole"
+          }
+        },
+        "TaskDefinition": {
+          "Ref": "TaskDefinition"
+        },
+        "DesiredCount": {
+          "Ref": "AppDesiredCount"
+        },
+        "LoadBalancers": [{
+          "TargetGroupArn": {
+            "Ref": "TargetGroup"
+          },
+          "ContainerPort": 443,
+          "ContainerName": "secure-proxy"
+
+        }],
+        "Cluster": {
+          "Fn::ImportValue": {
+            "Fn::Sub": "${ClusterStackName}-ClusterName"
+          }
+        },
+        "PlacementStrategies": [{
+          "Field": "attribute:ecs.availability-zone",
+          "Type": "spread"
+        }, {
+          "Field": "instanceId",
+          "Type": "spread"
+        }],
+        "DeploymentConfiguration": {
+          "MinimumHealthyPercent": { "Ref": "MinimumHealthyPercent" },
+          "MaximumPercent" : { "Ref": "MaximumPercent" }
+        }
+      }
+    },
+    "MinimumHealthyHosts": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "DependsOn": ["SNSTopicForFinanceAlarms"],
+      "Condition" : "SubscribeToPagerDutyEndpointCondition",
+      "Properties": {
+        "AlarmDescription": "Number of healthy hosts less than Threshold",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopicForFinanceAlarms"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "SNSTopicForFinanceAlarms"
+          }
+        ],
+        "MetricName": "HealthyHostCount",
+        "Statistic": "Minimum",
+        "Dimensions": [
+          {
+            "Name": "TargetGroup",
+            "Value": { "Fn::Select" : [ "5", { "Fn::Split": [":", {"Ref": "TargetGroup"}]}] }
+          },
+          {
+            "Name": "LoadBalancer",
+            "Value": {
+              "Fn::Select" : [ "1", { "Fn::Split":
+              [
+                "loadbalancer/",{ "Fn::ImportValue": { "Fn::Sub": "${ClusterStackName}-NetworkLoadBalancerARN" }}
+              ]
+              }]
+            }
+          }
+        ],
+        "Namespace": "AWS/NetworkELB",
+        "Period": { "Ref": "MinimumHealthyHostPeriod" },
+        "EvaluationPeriods": { "Ref": "MinimumHealthyHostEvaluationPeriods" },
+        "Threshold": { "Ref": "AppMinCount" },
+        "ComparisonOperator": "LessThanThreshold",
+        "TreatMissingData": "breaching"
+      }
+    },
+    "MaximumHealthyHosts": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "DependsOn": ["SNSTopicForFinanceAlarms"],
+      "Condition" : "SubscribeToPagerDutyEndpointCondition",
+      "Properties": {
+        "AlarmDescription": "Number of healthy hosts more than Threshold",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopicForFinanceAlarms"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "SNSTopicForFinanceAlarms"
+          }
+        ],
+        "MetricName": "HealthyHostCount",
+        "Statistic": "Maximum",
+        "Dimensions": [
+          {
+            "Name": "TargetGroup",
+            "Value": { "Fn::Select" : [ "5", { "Fn::Split": [":", {"Ref": "TargetGroup"}]}] }
+          },
+          {
+            "Name": "LoadBalancer",
+            "Value": {
+              "Fn::Select" : [ "1", { "Fn::Split":
+              [
+                "loadbalancer/",{ "Fn::ImportValue": { "Fn::Sub": "${ClusterStackName}-NetworkLoadBalancerARN" }}
+              ]
+              }]
+            }
+          }
+        ],
+        "Namespace": "AWS/NetworkELB",
+        "Period": { "Ref": "MaximumHealthyHostPeriod" },
+        "EvaluationPeriods": { "Ref": "MaximumHealthyHostEvaluationPeriods" },
+        "Threshold": { "Ref": "AppMaxCount" },
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "breaching"
+      }
+    },
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "RetentionInDays": {
+          "Ref": "LogRetention"
+        },
+        "LogGroupName": {
+          "Ref": "AWS::StackName"
+        }
+      }
+    },
+    "SubscriptionFilter": {
+      "Type": "AWS::Logs::SubscriptionFilter",
+      "DependsOn": ["LogGroup"],
+      "Properties": {
+        "RoleArn": {
+          "Fn::ImportValue": {
+            "Fn::Sub": "${KinesisStackName}-Role-Arn"
+          }
+        },
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "DestinationArn": {
+          "Fn::ImportValue": {
+            "Fn::Sub": "${KinesisStackName}-Stream-Arn"
+          }
+        }
+      }
+    },
+    "EcsAutoScaleRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "application-autoscaling.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
+          }]
+        },
+        "Path": "/",
+        "ManagedPolicyArns": ["arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole"]
+      }
+    },
+    "ScalableTarget": {
+      "Type": "AWS::ApplicationAutoScaling::ScalableTarget",
+      "DependsOn": ["EcsAutoScaleRole"],
+      "Properties": {
+        "MaxCapacity": {
+          "Ref": "AppMaxCount"
+        },
+        "MinCapacity": {
+          "Ref": "AppMinCount"
+        },
+        "ResourceId": {
+          "Fn::Join": ["/", ["service",
+            {
+              "Fn::ImportValue": {
+                "Fn::Sub": "${ClusterStackName}-ClusterName"
+              }
+            }, {
+              "Fn::GetAtt": ["Service", "Name"]
+            }]]
+        },
+        "RoleARN": {
+          "Fn::GetAtt": ["EcsAutoScaleRole", "Arn"]
+        },
+        "ScalableDimension": "ecs:service:DesiredCount",
+        "ServiceNamespace": "ecs"
+      }
+    },
+    "SNSTopicForFinanceAlarms" : {
+      "Type" : "AWS::SNS::Topic",
+      "Condition" : "SubscribeToPagerDutyEndpointCondition",
+      "Properties" : {
+        "Subscription" : [
+          { "Endpoint" : { "Fn::Sub" : "${PagerDutyEndpoint}" }, "Protocol" : "https" }
+        ],
+        "TopicName" : {
+          "Fn::Sub": "${Environment}-${AppName}"
+        }
+      }
+    },
+    "CpuUtilAlarmHigh": {
+      "DependsOn": ["SNSTopicForFinanceAlarms"],
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition" : "SubscribeToPagerDutyEndpointCondition",
+      "Properties": {
+        "AlarmDescription": "Cpu utilization alarm for ECS service for high cpu usage",
+        "AlarmActions": [{
+          "Ref": "SNSTopicForFinanceAlarms"
+        }],
+        "OKActions": [
+          {
+            "Ref": "SNSTopicForFinanceAlarms"
+          }
+        ],
+        "MetricName": "CPUUtilization",
+        "Namespace": "AWS/ECS",
+        "Statistic": "Average",
+        "Period": "60",
+        "EvaluationPeriods": { "Ref": "EvaluationPeriods" },
+        "Threshold": {
+          "Ref": "CPUHighThreshold"
+        },
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "ClusterName",
+            "Value": {
+              "Fn::ImportValue": {
+                "Fn::Sub": "${ClusterStackName}-ClusterName"
+              }
+            }
+          },
+          {
+            "Name": "ServiceName",
+            "Value": {
+              "Fn::GetAtt": ["Service", "Name"]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "Service": {
+      "Description": "The name of the ECS service created",
+      "Value": {
+        "Fn::GetAtt": ["Service", "Name"]
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-ServiceName"
+        }
+      }
+    },
+    "TaskFamily": {
+      "Description": "The family of the task created for the service",
+      "Value": {
+        "Ref": "AWS::StackName"
+      }
+    },
+    "TaskArn": {
+      "Description": "The ARN of the task created for the service",
+      "Value": {
+        "Ref": "TaskDefinition"
+      }
+    },
+    "ServiceDNS": {
+      "Description": "The dns name of the app load balancer for the service",
+      "Value": {
+        "Fn::Join": ["", [{
+          "Fn::ImportValue": {
+            "Fn::Sub": "${ClusterStackName}-LoadBalancerDNSName"
+          }
+        }, {
+          "Ref": "Path"
+        }]
+
+        ]
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-LoadBalancerDNSName"
+        }
+      }
+    },
+    "LogGroup": {
+      "Description": "The name of the log group created for the app",
+      "Value": {
+        "Ref": "LogGroup"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-LogGroupName"
+        }
+      }
+    }
+  }
+}
